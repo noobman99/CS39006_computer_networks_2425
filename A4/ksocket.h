@@ -21,6 +21,7 @@
 #define HEADER_SIZE 4
 #define MAX_SEQ_NUMBER 120
 #define MESSAGE_TIMEOUT 8
+#define RECIEVE_TIMEOUT 3
 #define GC_TIMEOUT 2
 #define SEM_FLAGS (O_CREAT)
 #define SEM_PERMS 0666

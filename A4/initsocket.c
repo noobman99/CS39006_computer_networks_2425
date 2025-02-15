@@ -180,6 +180,7 @@ int R()
     int nfds, nread, alen, nwrite, swdsize, frnt;
     int is_ack, ack_num, seq_num, recv_size, datalen, buff_idx;
     char buf[MESSAGE_SIZE], packet[MESSAGE_SIZE + HEADER_SIZE];
+    time_t lst_time[MAX_SOCKETS], time_stamp;
     struct sockaddr_in addr;
     struct timeval tv;
     // sem_t *mutex[MAX_SOCKETS];
@@ -188,6 +189,11 @@ int R()
     // {
     //     mutex[i] = sem_open(store->socks[i].mutex, SEM_FLAGS, SEM_INITVAL, SEM_INITVAL);
     // }
+
+    for (int i = 0; i < MAX_SOCKETS; i++)
+    {
+        lst_time[i] = -1;
+    }
 
     while (1)
     {
@@ -212,7 +218,7 @@ int R()
 
         // sem_post(&(store->mutex));
 
-        tv.tv_sec = 3;
+        tv.tv_sec = RECIEVE_TIMEOUT;
         tv.tv_usec = 0;
 
         printf("R_ : nfds = %d\n", nfds + 1);
@@ -241,20 +247,49 @@ int R()
             exit(1);
         }
 
+        time_stamp = time(NULL);
+
         // sem_wait(&(store->mutex));
 
         for (int i = 0; i < MAX_SOCKETS; i++)
         {
             ksock = &store->socks[i];
-            if (!FD_ISSET(ksock->sockfd, &fds))
-                continue;
-
-            printf("R_Socket %d: Recieved a message \n", i);
 
             memset(&addr, 0, sizeof(addr));
             alen = sizeof(addr);
 
             sem_wait(mutex[i]);
+
+            // DONE this here not checking timeout because there is a chance -- due to other sockets, select is triggered and timeout never reaches 0
+            // Instead the timeout effect is simulated using lst_time which ensures only after RECIEVE_TIMEOUT the ACK flag is sent again
+            if (ksock->is_allocated && ksock->rwnd.flags == NOSPACE && (time_stamp >= lst_time[i] + RECIEVE_TIMEOUT) && (recv_size = get_window_size(&ksock->rwnd)) > 0)
+            {
+                // No space -- SEND duplicate ACK packet with new buffer size
+                printf("R_Socket %d: NOSPACE set, sending updated recv_size %d\n", i, recv_size);
+                nwrite = create_packet(packet, (MESSAGE_SIZE + HEADER_SIZE), NULL, 0, 1, 0, ksock->rwnd.ack_num, recv_size);
+                addr.sin_family = AF_INET;
+                addr.sin_addr.s_addr = ksock->ip;
+                addr.sin_port = ksock->port;
+                alen = sizeof(addr);
+
+                // SO that a domino effect is not created and R does not consume entire computing
+                lst_time[i] = time_stamp;
+
+                // send the packet
+                sendto(ksock->sockfd, packet, nwrite, 0, (struct sockaddr *)&addr, alen);
+            }
+
+            if (!FD_ISSET(ksock->sockfd, &fds))
+            {
+                sem_post(mutex[i]);
+                continue;
+            }
+
+            memset(&addr, 0, sizeof(addr));
+            alen = sizeof(addr);
+
+            printf("R_Socket %d: Recieved a message \n", i);
+
             if (ksock->is_allocated)
             {
                 // read message from socket
@@ -276,21 +311,24 @@ int R()
                         datalen = decode_packet(packet, nread, buf, MESSAGE_SIZE, &is_ack, &seq_num, &ack_num, &recv_size);
                         if (is_ack)
                         {
-                            printf("R_Socket %d: It is an ACK for %d\n", i, ack_num);
+                            printf("R_Socket %d: It is an ACK for %d while acknum is %d\n", i, ack_num, ksock->swnd.ack_num);
 
                             // if the reciever packet is ACKNOWLEDGEMENT
                             if (ack_num == ksock->swnd.ack_num)
                             {
                                 // duplicate ACK, only reset maximum size possible for send buffer
                                 ksock->swnd.max_size = recv_size;
+                                printf("R_Socket %d: It is a dup ack.. reset max_size to %d\n", i, ksock->swnd.max_size);
                             }
                             else
                             {
                                 // for normal ACK
-                                ksock->swnd.ack_num = ack_num;
 
                                 if (in_window(ack_num, &ksock->swnd))
                                 {
+                                    // update the ksock ack num
+                                    ksock->swnd.ack_num = ack_num;
+
                                     // decrease size till ACKed packet
                                     frnt = ksock->swnd.front;
                                     while (in_window(frnt, &ksock->swnd) && frnt != ack_num)
@@ -319,6 +357,9 @@ int R()
                             // check if in recieving window
                             if (in_window(seq_num, &ksock->rwnd))
                             {
+                                // Only after a message has been recieved successfully, reset the NOSPACE flag
+                                ksock->rwnd.flags = 0;
+
                                 // check if already in buffer
                                 buff_idx = seq_num % 10;
                                 if (ksock->recv_buf.occ[buff_idx] == 0)
