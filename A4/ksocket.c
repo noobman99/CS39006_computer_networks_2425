@@ -290,6 +290,8 @@ ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __
 
     printf("Waiting for mutex\n");
 
+    mutex = sem_open(ksock->mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
+
     sem_wait(mutex);
 
     printf("Got the mutex\n");

@@ -8,10 +8,17 @@
 // global variables
 extern int errno;
 sem_t *mutex[MAX_SOCKETS];
+double prob;
 
 int mmax(int x, int y)
 {
     return x > y ? x : y;
+}
+
+int dropmessage(double prob)
+{
+    double e = (rand() / (double)RAND_MAX);
+    return e <= prob;
 }
 
 struct timeout_eval
@@ -272,7 +279,7 @@ int R()
                 addr.sin_port = ksock->port;
                 alen = sizeof(addr);
 
-                // SO that a domino effect is not created and R does not consume entire computing
+                // So that a domino effect is not created and R does not consume entire computing
                 lst_time[i] = time_stamp;
 
                 // send the packet
@@ -294,6 +301,15 @@ int R()
             {
                 // read message from socket
                 nread = recvfrom(ksock->sockfd, packet, (MESSAGE_SIZE + HEADER_SIZE), 0, (struct sockaddr *)&addr, &alen);
+                datalen = decode_packet(packet, nread, buf, MESSAGE_SIZE, &is_ack, &seq_num, &ack_num, &recv_size);
+
+                // Simulate dropping of packets
+                if (dropmessage(prob))
+                {
+                    printf("R_Socket %d: Drop message spotted for following desc, is_ack: %d, seq_num: %d, ack_num: %d, recv_size: %d\n", i, is_ack, seq_num, ack_num, recv_size);
+                    sem_post(mutex[i]);
+                    continue;
+                }
 
                 // check if they are from bound address and port
                 if (addr.sin_addr.s_addr == ksock->ip && addr.sin_port == ksock->port)
@@ -391,19 +407,40 @@ int R()
                                         // send ACK with the seq number
                                         memset(packet, 0, (MESSAGE_SIZE + HEADER_SIZE));
                                         recv_size = get_window_size(&ksock->rwnd);
+
                                         if (recv_size == 0)
                                         {
                                             // set NOSPACE flag
                                             set_flag(NOSPACE, &ksock->rwnd);
-                                            // set last acknowledged seq number
-                                            ksock->rwnd.ack_num = ack_num;
                                         }
+
+                                        // set last acknowledged seq number
+                                        ksock->rwnd.ack_num = ack_num;
+
+                                        // send the packet
                                         nwrite = create_packet(packet, (MESSAGE_SIZE + HEADER_SIZE), NULL, 0, 1, 0, ack_num, recv_size);
                                         sendto(ksock->sockfd, packet, nwrite, 0, (struct sockaddr *)&addr, alen);
 
                                         printf("R_Socket %d: Sending ACK for %d\n", i, ack_num);
                                         printf("R_Socket %d: rwnd front %d, back %d, size %d\n", i, ksock->rwnd.front, ksock->rwnd.back, recv_size);
                                     }
+                                }
+                            }
+                            else
+                            {
+                                // BHAYANKAR CODE
+                                // to handle when reciever and sender window get out of sync
+                                // if last ack_num of rwnd == seq_num, send a packet with given seq_num as ack_num
+                                if (seq_num == ksock->rwnd.ack_num)
+                                {
+                                    memset(packet, 0, (MESSAGE_SIZE + HEADER_SIZE));
+                                    recv_size = get_window_size(&ksock->rwnd);
+
+                                    // send the packet
+                                    nwrite = create_packet(packet, (MESSAGE_SIZE + HEADER_SIZE), NULL, 0, 1, 0, seq_num, recv_size);
+                                    sendto(ksock->sockfd, packet, nwrite, 0, (struct sockaddr *)&addr, alen);
+
+                                    printf("R_Socket %d: (BAD EDGE CASE) Sending dupli ACK for %d\n", i, ack_num);
                                 }
                             }
                         }
@@ -649,13 +686,25 @@ void G()
     }
 }
 
-int main()
+int main(int argc, char *argv[])
 {
 
     // add signal handlers
     signal(SIGINT, handlesigint);
     signal(SIGSEGV, handlesigint);
     signal(SIGKILL, handlesigint);
+
+    // pass probability as argument
+    if (argc == 1)
+    {
+        prob = 0;
+    }
+    else
+    {
+        prob = atof(argv[1]);
+    }
+
+    srand(time(NULL) ^ getpid());
 
     // initialize the shared memory
     key_t shmkey = ftok(FKEY, KTP_PROJECT);
