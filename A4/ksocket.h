@@ -26,6 +26,7 @@
 #define SEM_FLAGS (O_CREAT)
 #define SEM_PERMS 0666
 #define SEM_INITVAL 1
+#define p 0
 
 #define SOCK_KTP 0101
 
@@ -92,6 +93,15 @@ typedef struct ksocket ktp_socket_store;
 typedef struct ktp_socket_info ktp_socket;
 
 // auxilary functions
+int dropmessage();
+ktp_socket_store *get_socket_store();
+ktp_socket *get_socket(ktp_sockid i);
+void clear_socket(ktp_socket *ksock);
+int in_window(int seq_num, struct sld_wnd *wnd);
+int increase_window(struct sld_wnd *wnd);
+int decrease_window(struct sld_wnd *wnd);
+int get_window_size(struct sld_wnd *wnd);
+int set_flag(int __flag, struct sld_wnd *wnd);
 
 // user functions
 
@@ -99,4 +109,5 @@ ktp_sockid k_socket(int __domain, int __type, int __protocol);
 int k_bind(ktp_sockid sock, SOCK_ADDR __src_addr, socklen_t __src_addr_len, SOCK_ADDR __cli_addr, socklen_t __cli_addr_len);
 ssize_t k_sendto(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __addr, socklen_t __addr_len);
 ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __addr, socklen_t *__addr_len);
+int k_isempty(ktp_sockid sock);
 int k_close(ktp_sockid sock);

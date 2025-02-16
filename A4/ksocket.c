@@ -3,6 +3,14 @@
 
 extern int errno;
 
+// auxilary functions
+
+int dropmessage()
+{
+    double e = (rand() / (double)RAND_MAX);
+    return e <= p;
+}
+
 ktp_socket_store *get_socket_store()
 {
     key_t shmkey = ftok(FKEY, KTP_PROJECT);
@@ -31,7 +39,7 @@ ktp_socket *get_socket(ktp_sockid i)
     return &(stor->socks[i]);
 }
 
-void reset_socket(ktp_socket *ksock)
+void clear_socket(ktp_socket *ksock)
 {
     ksock->ip = 0;
     ksock->is_allocated = 0;
@@ -67,10 +75,51 @@ void reset_socket(ktp_socket *ksock)
     }
 }
 
+int in_window(int seq_num, struct sld_wnd *wnd)
+{
+    if (wnd->back == wnd->front || seq_num < 0 || seq_num >= MAX_SEQ_NUMBER)
+    {
+        return 0;
+    }
+
+    if (wnd->back < wnd->front)
+    {
+        return (seq_num < wnd->back) || (seq_num >= wnd->front);
+    }
+    else
+    {
+        return seq_num < wnd->back && seq_num >= wnd->front;
+    }
+}
+
 int increase_window(struct sld_wnd *wnd)
 {
     wnd->back = (wnd->back + 1) % MAX_SEQ_NUMBER;
     return wnd->back;
+}
+
+int decrease_window(struct sld_wnd *wnd)
+{
+    wnd->front = (wnd->front + 1) % MAX_SEQ_NUMBER;
+    return wnd->front;
+}
+
+int get_window_size(struct sld_wnd *wnd)
+{
+    if (wnd->back < wnd->front)
+    {
+        return (wnd->back - 0) + (MAX_SEQ_NUMBER - wnd->front);
+    }
+    else
+    {
+        return (wnd->back - wnd->front);
+    }
+}
+
+int set_flag(int __flag, struct sld_wnd *wnd)
+{
+    wnd->flags = wnd->flags | __flag;
+    return wnd->flags;
 }
 
 ktp_sockid k_socket(int __domain, int __type, int __protocol)
@@ -101,7 +150,7 @@ ktp_sockid k_socket(int __domain, int __type, int __protocol)
 
         printf("trying to create a socket\n");
 
-        reset_socket(&(socket_store->socks[i]));
+        clear_socket(&(socket_store->socks[i]));
 
         socket_store->socks[i].is_allocated = 1;
         socket_store->socks[i].pid = getpid();
@@ -312,7 +361,7 @@ ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __
         printf("Recieve buff size : %d\n", ksock->recv_buf.size);
         sem_post(mutex);
         sem_close(mutex);
-        errno = ENOSPACE;
+        errno = ENOMESSAGE;
         perror("Recieve buffer is empty");
         return -1;
     }
@@ -338,6 +387,30 @@ ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __
     sem_close(mutex);
 
     return n;
+}
+
+int k_isempty(ktp_sockid sock)
+{
+    ktp_socket *ksock = get_socket(sock);
+
+    if (ksock == NULL)
+    {
+        return -1;
+    }
+
+    sem_t *mutex = sem_open(ksock->mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
+
+    // sem_wait(&(socket_store->mutex));
+    sem_wait(mutex);
+
+    int isempty = (ksock->recv_buf.size == 0) && (ksock->send_buf.size == 0);
+
+    printf("send buf size %d\n", ksock->send_buf.size);
+    printf("recv buf size %d\n", ksock->recv_buf.size);
+
+    sem_post(mutex);
+
+    return isempty;
 }
 
 int k_close(ktp_sockid sock)

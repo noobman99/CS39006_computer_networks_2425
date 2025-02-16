@@ -10,17 +10,6 @@ extern int errno;
 sem_t *mutex[MAX_SOCKETS];
 double prob;
 
-int mmax(int x, int y)
-{
-    return x > y ? x : y;
-}
-
-int dropmessage(double prob)
-{
-    double e = (rand() / (double)RAND_MAX);
-    return e <= prob;
-}
-
 struct timeout_eval
 {
     time_t t;
@@ -28,21 +17,9 @@ struct timeout_eval
     int back;
 };
 
-ktp_socket_store *get_socket_store()
+int mmax(int x, int y)
 {
-    key_t shmkey = ftok(FKEY, KTP_PROJECT);
-    int shmid = shmget(shmkey, sizeof(ktp_socket_store), 0666 | IPC_CREAT);
-
-    if (shmid < 0)
-    {
-        errno = NOSOCKETRUNNING;
-        perror("No shared memory was intialized");
-        exit(1);
-    }
-
-    ktp_socket_store *socket_store = shmat(shmid, NULL, 0);
-
-    return socket_store;
+    return x > y ? x : y;
 }
 
 ssize_t create_packet(char *packet, int m, char *buf, int n, int is_ack, int seq_number, int ack_number, int recv_size)
@@ -93,54 +70,7 @@ ssize_t decode_packet(char *packet, int m, char *buf, int n, int *is_ack, int *s
     return m - HEADER_SIZE;
 }
 
-int in_window(int seq_num, struct sld_wnd *wnd)
-{
-    if (wnd->back == wnd->front || seq_num < 0 || seq_num >= MAX_SEQ_NUMBER)
-    {
-        return 0;
-    }
-
-    if (wnd->back < wnd->front)
-    {
-        return (seq_num < wnd->back) || (seq_num >= wnd->front);
-    }
-    else
-    {
-        return seq_num < wnd->back && seq_num >= wnd->front;
-    }
-}
-
-int increase_window(struct sld_wnd *wnd)
-{
-    wnd->back = (wnd->back + 1) % MAX_SEQ_NUMBER;
-    return wnd->back;
-}
-
-int decrease_window(struct sld_wnd *wnd)
-{
-    wnd->front = (wnd->front + 1) % MAX_SEQ_NUMBER;
-    return wnd->front;
-}
-
-int get_window_size(struct sld_wnd *wnd)
-{
-    if (wnd->back < wnd->front)
-    {
-        return (wnd->back - 0) + (MAX_SEQ_NUMBER - wnd->front);
-    }
-    else
-    {
-        return (wnd->back - wnd->front);
-    }
-}
-
-int set_flag(int __flag, struct sld_wnd *wnd)
-{
-    wnd->flags = wnd->flags | __flag;
-    return wnd->flags;
-}
-
-void handlesigint(int signo)
+void handleclose(int signo)
 {
     printf("KILLING THE PROCESS\n");
 
@@ -422,7 +352,7 @@ int R()
                                         sendto(ksock->sockfd, packet, nwrite, 0, (struct sockaddr *)&addr, alen);
 
                                         printf("R_Socket %d: Sending ACK for %d\n", i, ack_num);
-                                        printf("R_Socket %d: rwnd front %d, back %d, size %d\n", i, ksock->rwnd.front, ksock->rwnd.back, recv_size);
+                                        // printf("R_Socket %d: rwnd front %d, back %d, size %d\n", i, ksock->rwnd.front, ksock->rwnd.back, recv_size);
                                     }
                                 }
                             }
@@ -449,8 +379,6 @@ int R()
             }
             sem_post(mutex[i]);
         }
-
-        // sem_post(&(store->mutex));
     }
 }
 
@@ -460,17 +388,10 @@ void S()
     struct timeout_eval lst_time[MAX_SOCKETS][2];
     ktp_socket *ksock;
     time_t time_stamp;
-    int rend, bnum, seq_num;
+    int rend, bnum, seq_num, pcksize, alen;
     int to_send; // boolean
     char packet[MESSAGE_SIZE + HEADER_SIZE];
-    int pcksize, alen;
     struct sockaddr_in addr;
-    // sem_t *mutex[MAX_SOCKETS];
-
-    // for (int i = 0; i < MAX_SOCKETS; i++)
-    // {
-    //     mutex[i] = sem_open(store->socks[i].mutex, SEM_FLAGS, SEM_INITVAL, SEM_INITVAL);
-    // }
 
     for (int i = 0; i < MAX_SOCKETS; i++)
     {
@@ -492,22 +413,13 @@ void S()
 
             sem_wait(mutex[i]);
 
-            // printf("S_Socket %d: got mutex\n", i);
-
             if (ksock->is_allocated == 0)
             {
-                // printf("S_Socket %d: is not allocated\n", i);
                 sem_post(mutex[i]);
                 continue;
             }
 
-            // printf("S_Socket %d: socket is allocated\n", i);
-
             // check if all messages in first lst_time are ACKed
-
-            // printf("S_Socked %d: now: %ld, t[0]: %ld, timeout = %d\n", i, time_stamp, lst_time[i][0].t, MESSAGE_TIMEOUT);
-
-            printf("S_Socket %d: lst[0]: %ld\n", i, lst_time[i][0].t);
 
             if (lst_time[i][0].t != -1)
             {
@@ -559,8 +471,6 @@ void S()
 
             if (to_send)
             {
-                // printf("S_Socket %d: Trying to send\n", i);
-
                 // initialize the address
                 addr.sin_addr.s_addr = ksock->ip;
                 addr.sin_port = ksock->port;
@@ -621,42 +531,6 @@ void S()
     }
 }
 
-void initialize_socket(ktp_socket *ksock)
-{
-    ksock->ip = 0;
-    ksock->is_allocated = 0;
-    ksock->pid = 0;
-    ksock->port = 0;
-
-    ksock->rwnd.ack_num = -1;
-    ksock->rwnd.front = 0;
-    ksock->rwnd.back = MAX_MESSAGES;
-    ksock->rwnd.flags = 0;
-    ksock->rwnd.max_size = MAX_MESSAGES;
-
-    ksock->swnd.ack_num = -1;
-    ksock->swnd.front = 0;
-    ksock->swnd.back = 0;
-    ksock->swnd.flags = 0;
-    ksock->swnd.max_size = MAX_MESSAGES;
-
-    ksock->recv_buf.size = 0;
-    ksock->recv_buf.ptr = 0;
-    memset(ksock->recv_buf.occ, 0, MAX_MESSAGES);
-    for (int i = 0; i < MAX_MESSAGES; i++)
-    {
-        memset(ksock->recv_buf.s[i], 0, MESSAGE_SIZE);
-    }
-
-    ksock->send_buf.size = 0;
-    ksock->send_buf.ptr = 0;
-    memset(ksock->send_buf.occ, 0, MAX_MESSAGES);
-    for (int i = 0; i < MAX_MESSAGES; i++)
-    {
-        memset(ksock->send_buf.s[i], 0, MESSAGE_SIZE);
-    }
-}
-
 void G()
 {
     ktp_socket_store *store = get_socket_store();
@@ -679,7 +553,7 @@ void G()
                     ksock->is_allocated = 0;
 
                     // reset socket
-                    initialize_socket(ksock);
+                    clear_socket(ksock);
                 }
             }
         }
@@ -690,19 +564,9 @@ int main(int argc, char *argv[])
 {
 
     // add signal handlers
-    signal(SIGINT, handlesigint);
-    signal(SIGSEGV, handlesigint);
-    signal(SIGKILL, handlesigint);
-
-    // pass probability as argument
-    if (argc == 1)
-    {
-        prob = 0;
-    }
-    else
-    {
-        prob = atof(argv[1]);
-    }
+    signal(SIGINT, handleclose);
+    signal(SIGSEGV, handleclose);
+    signal(SIGKILL, handleclose);
 
     srand(time(NULL) ^ getpid());
 
@@ -723,7 +587,7 @@ int main(int argc, char *argv[])
 
     for (int i = 0; i < MAX_SOCKETS; i++)
     {
-        initialize_socket(&socket_store->socks[i]);
+        clear_socket(&socket_store->socks[i]);
         socket_store->socks[i].sockfd = socket(AF_INET, SOCK_DGRAM, 0);
         sprintf(socket_store->socks[i].mutex, "/ssem%d", i);
         mutex[i] = sem_open(socket_store->socks[i].mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);

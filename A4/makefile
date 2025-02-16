@@ -4,13 +4,13 @@ send: ksocket.c ksocket.h sender.c
 	gcc -o send sender.c ksocket.c -lrt -lpthread
 
 initsocket: initsocket.c ksocket.h
-	gcc -o initsocket initsocket.c -lrt -lpthread
+	gcc -o initsocket initsocket.c ksocket.c -lrt -lpthread
 
 recv: ksocket.c ksocket.h reciever.c
 	gcc -o recv reciever.c ksocket.c -lrt -lpthread
 
 run_s:
-	./send input.txt
+	./send in.txt
 
 run_r:
 	./recv output.txt
