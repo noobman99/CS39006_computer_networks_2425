@@ -1,3 +1,9 @@
+// =====================================
+// Assignment 3 Submission
+// Name: Parth Shashin Patil
+// Roll number: 22CS30041
+// =====================================
+
 #include "ksocket.h"
 #include <sys/select.h>
 #include <time.h>
@@ -9,6 +15,16 @@
 extern int errno;
 sem_t *mutex[MAX_SOCKETS];
 double prob;
+
+// auxilary functions (defined in ksocket.c)
+int dropmessage();
+ktp_socket_store *get_socket_store();
+ktp_socket *get_socket(ktp_sockid i);
+void clear_socket(ktp_socket *ksock);
+int in_window(int seq_num, struct sld_wnd *wnd);
+int increase_window(struct sld_wnd *wnd);
+int decrease_window(struct sld_wnd *wnd);
+int get_window_size(struct sld_wnd *wnd);
 
 struct timeout_eval
 {
@@ -22,6 +38,7 @@ int mmax(int x, int y)
     return x > y ? x : y;
 }
 
+// A wrapper function to create a packet with desired header
 ssize_t create_packet(char *packet, int m, char *buf, int n, int is_ack, int seq_number, int ack_number, int recv_size)
 {
     if (m < n + HEADER_SIZE)
@@ -46,6 +63,7 @@ ssize_t create_packet(char *packet, int m, char *buf, int n, int is_ack, int seq
     return n + HEADER_SIZE;
 }
 
+// A wrapper function to decode a packet with desired header
 ssize_t decode_packet(char *packet, int m, char *buf, int n, int *is_ack, int *seq_number, int *ack_number, int *recv_size)
 {
     if (n < m - HEADER_SIZE)
@@ -70,6 +88,7 @@ ssize_t decode_packet(char *packet, int m, char *buf, int n, int *is_ack, int *s
     return m - HEADER_SIZE;
 }
 
+// Signal handler to close the process
 void handleclose(int signo)
 {
     printf("KILLING THE PROCESS\n");
@@ -109,6 +128,7 @@ void handleclose(int signo)
     exit(0);
 }
 
+// R()
 int R()
 {
     ktp_socket_store *store = get_socket_store();
@@ -120,12 +140,6 @@ int R()
     time_t lst_time[MAX_SOCKETS], time_stamp;
     struct sockaddr_in addr;
     struct timeval tv;
-    // sem_t *mutex[MAX_SOCKETS];
-
-    // for (int i = 0; i < MAX_SOCKETS; i++)
-    // {
-    //     mutex[i] = sem_open(store->socks[i].mutex, SEM_FLAGS, SEM_INITVAL, SEM_INITVAL);
-    // }
 
     for (int i = 0; i < MAX_SOCKETS; i++)
     {
@@ -136,8 +150,6 @@ int R()
     {
         FD_ZERO(&fds);
         nfds = 0;
-
-        // sem_wait(&(store->mutex));
 
         // initialize the file descriptor set
         for (int i = 0; i < MAX_SOCKETS; i++)
@@ -152,8 +164,6 @@ int R()
             }
             sem_post(mutex[i]);
         }
-
-        // sem_post(&(store->mutex));
 
         tv.tv_sec = RECIEVE_TIMEOUT;
         tv.tv_usec = 0;
@@ -185,8 +195,6 @@ int R()
         }
 
         time_stamp = time(NULL);
-
-        // sem_wait(&(store->mutex));
 
         for (int i = 0; i < MAX_SOCKETS; i++)
         {
@@ -244,13 +252,13 @@ int R()
                 // check if they are from bound address and port
                 if (addr.sin_addr.s_addr == ksock->ip && addr.sin_port == ksock->port)
                 {
-                    printf("R_Socket %d: Recieved a valid message yay\n", i);
+                    printf("R_Socket %d: Recieved a valid message\n", i);
 
                     if (nread == 0)
                     {
                         ksock->is_allocated = 0;
                         ksock->pid = 0;
-                        printf("R_Socket %d: They brokeup :( \n", i);
+                        printf("R_Socket %d: Connection broke :( \n", i);
                     }
                     else
                     {
@@ -320,8 +328,6 @@ int R()
                                     }
                                     ksock->recv_buf.size++;
 
-                                    printf("R_Socket %d: recv buff size: %d\n", i, ksock->recv_buf.size);
-
                                     // check if in order message
                                     if (ksock->rwnd.front == seq_num)
                                     {
@@ -341,7 +347,7 @@ int R()
                                         if (recv_size == 0)
                                         {
                                             // set NOSPACE flag
-                                            set_flag(NOSPACE, &ksock->rwnd);
+                                            ksock->rwnd.flags = NOSPACE;
                                         }
 
                                         // set last acknowledged seq number
@@ -352,7 +358,6 @@ int R()
                                         sendto(ksock->sockfd, packet, nwrite, 0, (struct sockaddr *)&addr, alen);
 
                                         printf("R_Socket %d: Sending ACK for %d\n", i, ack_num);
-                                        // printf("R_Socket %d: rwnd front %d, back %d, size %d\n", i, ksock->rwnd.front, ksock->rwnd.back, recv_size);
                                     }
                                 }
                             }
@@ -382,6 +387,7 @@ int R()
     }
 }
 
+// S()
 void S()
 {
     ktp_socket_store *store = get_socket_store();
@@ -531,6 +537,7 @@ void S()
     }
 }
 
+// Garbage collector
 void G()
 {
     ktp_socket_store *store = get_socket_store();
@@ -549,7 +556,6 @@ void G()
                 // check if process is dead
                 if (kill(ksock->pid, 0) == -1)
                 {
-                    // check if mutex value is 0 -- to do
                     ksock->is_allocated = 0;
 
                     // reset socket

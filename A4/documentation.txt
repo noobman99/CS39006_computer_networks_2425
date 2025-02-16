@@ -1,0 +1,244 @@
+# KTP Socket (ksocket) Documentation
+
+## Overview
+This documentation covers the data structures and functions defined in the KTP socket implementation across `ksocket.h`, `initsocket.c`, and `ksocket.c`.
+
+## Constants
+
+### Socket Configuration
+MESSAGE_SIZE: 512 - Maximum size of a message
+MAX_MESSAGES: 10 - Maximum number of messages in buffer
+MAX_SOCKETS: 2 - Maximum number of sockets
+HEADER_SIZE: 4 - Size of the packet header
+MAX_SEQ_NUMBER: 120 - Maximum sequence number for sliding window
+MESSAGE_TIMEOUT: 10 - Timeout for message retransmission
+RECIEVE_TIMEOUT: 5 - Timeout for receive operations
+GC_TIMEOUT: 2 - Timeout for garbage collection
+p: 0.1 - Probability value for packet drop simulation
+
+### Semaphore Settings
+SEM_FLAGS: O_CREAT - Flags for semaphore creation
+SEM_PERMS: 0666 - Permissions for semaphores
+SEM_INITVAL: 1 - Initial value for semaphores
+
+### Socket Types and Keys
+SOCK_KTP: 0101 - KTP socket type
+KTP_PROJECT: 9 - Project ID for shared memory
+FKEY: "/home" - File path for ftok()
+
+### Error Codes
+NOSOCKETRUNNING: 0 - No socket is running
+ENOSPACE: 1 - No space available
+NOTBINDABLE: 2 - Socket cannot be bound
+INVALIDSOCKET: 3 - Invalid socket
+ENOTBOUND: 4 - Socket is not bound
+ENOMESSAGE: 5 - No message available
+EXISTINGHANDLER: 6 - Handler already exists
+
+### Flags
+NOSPACE: 1 - No space flag for sliding window
+
+## Data Structures
+
+### struct sld_wnd
+Sliding window structure for reliable transmission.
+Fields:
+- int max_size: Maximum window size
+- int front: Front index of the window
+- int back: Back index of the window
+- int ack_num: Last acknowledged sequence number
+- int flags: Window flags (e.g., NOSPACE)
+
+### struct sck_buf
+Socket buffer for sending and receiving messages.
+Fields:
+- char s[MAX_MESSAGES][MESSAGE_SIZE]: Buffer to store messages
+- int occ[MAX_MESSAGES]: Occupation status of each buffer slot
+- int ptr: Current pointer position in the buffer
+- int size: Current size of the buffer
+
+### struct ktp_socket_info
+Information about a KTP socket.
+Fields:
+- int is_allocated: Whether the socket is allocated
+- int pid: Process ID using this socket
+- int sockfd: Underlying socket file descriptor
+- in_addr_t ip: IP address for communication
+- in_port_t port: Port for communication
+- in_addr_t s_ip: Source IP address
+- in_port_t s_port: Source port
+- char mutex[10]: Mutex name for this socket
+- struct sck_buf send_buf: Send buffer
+- struct sck_buf recv_buf: Receive buffer
+- struct sld_wnd swnd: Sliding window for sending
+- struct sld_wnd rwnd: Sliding window for receiving
+
+### struct ksocket
+Container for multiple KTP sockets.
+Fields:
+- struct ktp_socket_info socks[MAX_SOCKETS]: Array of socket information
+
+### struct timeout_eval (in initsocket.c)
+Used for tracking timeouts in the sender thread.
+Fields:
+- time_t t: Timestamp
+- int front: Front of the window at this timestamp
+- int back: Back of the window at this timestamp
+
+
+## Function Descriptions
+
+### Core Socket Functions
+
+#### ktp_sockid k_socket(int __domain, int __type, int __protocol)
+Allocate a socket from the socket store and return the socket id (index).
+Parameters:
+  - __domain: Address family
+  - __type: Socket type
+  - __protocol: Protocol
+Returns: Socket identifier or error code
+
+#### int k_bind(ktp_sockid sock, SOCK_ADDR __src_addr, socklen_t __src_addr_len, SOCK_ADDR __cli_addr, socklen_t __cli_addr_len)
+Bind the socket to the given source and destination addresses (stores them in the socket datastructure).
+Parameters:
+  - sock: Socket identifier
+  - __src_addr: Source address
+  - __src_addr_len: Source address length
+  - __cli_addr: Client address
+  - __cli_addr_len: Client address length
+Returns: 0 on success, -1 on error
+
+#### ssize_t k_sendto(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __addr, socklen_t __addr_len)
+Puts the given message in the send buffer of the socket and returns the number of bytes sent (NON-BLOCKING).
+Parameters:
+  - sock: Socket identifier
+  - buf: Buffer containing data to send
+  - n: Number of bytes to send
+  - flags: Sending flags
+  - __addr: Destination address
+  - __addr_len: Destination address length
+Returns: Number of bytes sent, -1 for error
+
+#### ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __addr, socklen_t *__addr_len)
+Reads the message from the recieve buffer of the socket and returns the number of bytes read (NON-BLOCKING).
+Parameters:
+  - sock: Socket identifier
+  - buf: Buffer to store received data
+  - n: Maximum number of bytes to receive
+  - flags: Receiving flags
+  - __addr: Source address
+  - __addr_len: Source address length
+Returns: Number of bytes received, -1 for error
+
+#### int k_isempty(ktp_sockid sock)
+Check if the socket has any pending operations to be done. If true, socket is safe to close.
+Parameters:
+  - sock: Socket identifier
+Returns: Non-zero if empty, 0 otherwise
+
+#### int k_close(ktp_sockid sock)
+Unallocate the socket and free the resources.
+Parameters:
+  - sock: Socket identifier
+Returns: 0 on success, error code on failure
+
+### Auxiliary Functions
+
+#### int dropmessage()
+Simulates packet loss based on probability.
+Returns: 1 if message should be dropped, 0 otherwise
+
+#### ktp_socket_store *get_socket_store()
+Gets the socket store from shared memory.
+Returns: Pointer to the socket store
+
+#### ktp_socket *get_socket(ktp_sockid i)
+Gets a specific socket from the socket store.
+Parameters:
+  - i: Socket identifier
+Returns: Pointer to the socket or NULL
+
+#### void clear_socket(ktp_socket *ksock)
+Resets a socket to its initial state.
+Parameters:
+  - ksock: Pointer to the socket to clear
+
+#### int in_window(int seq_num, struct sld_wnd *wnd)
+Checks if a sequence number is within the sliding window.
+Parameters:
+  - seq_num: Sequence number to check
+  - wnd: Pointer to the sliding window
+Returns: 1 if in window, 0 otherwise
+
+#### int increase_window(struct sld_wnd *wnd)
+Increases the sliding window size.
+Parameters:
+  - wnd: Pointer to the sliding window
+Returns: New back of the window
+
+#### int decrease_window(struct sld_wnd *wnd)
+Decreases the sliding window size.
+Parameters:
+  - wnd: Pointer to the sliding window
+Returns: New front of the window
+
+#### int get_window_size(struct sld_wnd *wnd)
+Gets the current size of the sliding window.
+Parameters:
+  - wnd: Pointer to the sliding window
+Returns: Current window size
+
+#### ssize_t create_packet(char *packet, int m, char *buf, int n, int is_ack, int seq_number, int ack_number, int recv_size)
+Creates a packet with header and data.
+Parameters:
+  - packet: Buffer to store the packet
+  - m: Size of the packet buffer
+  - buf: Data to include in the packet
+  - n: Size of the data
+  - is_ack: Whether this is an ACK packet
+  - seq_number: Sequence number
+  - ack_number: Acknowledgment number
+  - recv_size: Receiver window size
+Returns: Size of the created packet or -1 on error
+
+#### ssize_t decode_packet(char *packet, int m, char *buf, int n, int *is_ack, int *seq_number, int *ack_number, int *recv_size)
+Decodes a packet into header and data.
+Parameters:
+  - packet: Packet to decode
+  - m: Size of the packet
+  - buf: Buffer to store the data
+  - n: Size of the data buffer
+  - is_ack: Pointer to store whether this is an ACK packet
+  - seq_number: Pointer to store the sequence number
+  - ack_number: Pointer to store the acknowledgment number
+  - recv_size: Pointer to store the receiver window size
+Returns: Size of the decoded data or -1 on error
+
+### Thread Functions
+
+#### void handleclose(int signo)
+Signal handler to clean up and close the process.
+Parameters:
+  - signo: Signal number
+
+#### int R()
+Receiver thread function. Handles incoming packets, ACKs, and window management.
+Returns: Should not return
+
+#### void S()
+Sender thread function. Handles outgoing packets, retransmissions, and window management.
+Returns: Should not return
+
+#### void G()
+Garbage collector thread function. Cleans up dead sockets.
+
+
+### Transmission Statistics -
+Given a file of size 100kB, 201 data packets were sent from user1 to user2. 
+Following is the number of transmitted packets using KTP for different values of packet loss probability (p)
+
+p = 0.1 - 286 data packets and 152 ACK packets
+p = 0.2 - 362 data packets and 141 ACK packets
+p = 0.3 - 498 data packets and 128 ACK packets
+p = 0.4 - 610 data packets and 120 ACK packets
+p = 0.5 - 966 data packets and 118 ACK packets

@@ -1,3 +1,9 @@
+// =====================================
+// Assignment 3 Submission
+// Name: Parth Shashin Patil
+// Roll number: 22CS30041
+// =====================================
+
 #include "ksocket.h"
 #include <stdio.h>
 
@@ -5,12 +11,14 @@ extern int errno;
 
 // auxilary functions
 
+// Simulate the packet drop with given probability
 int dropmessage()
 {
     double e = (rand() / (double)RAND_MAX);
     return e <= p;
 }
 
+// get the socket store from the shared memory
 ktp_socket_store *get_socket_store()
 {
     key_t shmkey = ftok(FKEY, KTP_PROJECT);
@@ -27,6 +35,7 @@ ktp_socket_store *get_socket_store()
     return socket_store;
 }
 
+// get the ktp_socket structure from the socket store with given index
 ktp_socket *get_socket(ktp_sockid i)
 {
     if (i >= MAX_SOCKETS)
@@ -39,6 +48,7 @@ ktp_socket *get_socket(ktp_sockid i)
     return &(stor->socks[i]);
 }
 
+// clear the socket data, make it ready for reuse
 void clear_socket(ktp_socket *ksock)
 {
     ksock->ip = 0;
@@ -75,6 +85,7 @@ void clear_socket(ktp_socket *ksock)
     }
 }
 
+// check if the sequence number is in the window
 int in_window(int seq_num, struct sld_wnd *wnd)
 {
     if (wnd->back == wnd->front || seq_num < 0 || seq_num >= MAX_SEQ_NUMBER)
@@ -92,18 +103,21 @@ int in_window(int seq_num, struct sld_wnd *wnd)
     }
 }
 
+// increase the window (increase the back pointer)
 int increase_window(struct sld_wnd *wnd)
 {
     wnd->back = (wnd->back + 1) % MAX_SEQ_NUMBER;
     return wnd->back;
 }
 
+// decrease the window (increase the front pointer)
 int decrease_window(struct sld_wnd *wnd)
 {
     wnd->front = (wnd->front + 1) % MAX_SEQ_NUMBER;
     return wnd->front;
 }
 
+// get the size of the window (number of packets in the window)
 int get_window_size(struct sld_wnd *wnd)
 {
     if (wnd->back < wnd->front)
@@ -116,30 +130,19 @@ int get_window_size(struct sld_wnd *wnd)
     }
 }
 
-int set_flag(int __flag, struct sld_wnd *wnd)
-{
-    wnd->flags = wnd->flags | __flag;
-    return wnd->flags;
-}
+// user functions
 
+// allocate a socket from the socket store and return the socket id (index)
 ktp_sockid k_socket(int __domain, int __type, int __protocol)
 {
     ktp_socket_store *socket_store = get_socket_store();
-    // int sockfd;
     sem_t *mutex;
-
-    // sem_wait(&(socket_store->mutex));
 
     for (int i = 0; i < MAX_SOCKETS; i++)
     {
-        printf("Checking if socket %d is free\n", i);
-        printf(" mutex: %s\n", socket_store->socks[i].mutex);
         mutex = sem_open(socket_store->socks[i].mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
 
-        printf("Mutex successfully created\n");
         sem_wait(mutex);
-
-        printf("Mutex acquired\n");
 
         if (socket_store->socks[i].is_allocated)
         {
@@ -148,35 +151,27 @@ ktp_sockid k_socket(int __domain, int __type, int __protocol)
             continue;
         }
 
-        printf("trying to create a socket\n");
-
         clear_socket(&(socket_store->socks[i]));
 
         socket_store->socks[i].is_allocated = 1;
         socket_store->socks[i].pid = getpid();
 
-        printf("successfully created socket\n");
-
         sem_post(mutex);
         sem_close(mutex);
 
-        // sem_post(&(socket_store->mutex));
         return i;
     }
 
     errno = ENOSPACE;
-    // sem_post(&(socket_store->mutex));
     return -1;
 }
 
+// bind the socket to the given source and destination addresses
 int k_bind(ktp_sockid sock, SOCK_ADDR __src_addr, socklen_t __src_addr_len, SOCK_ADDR __cli_addr, socklen_t __cli_addr_len)
 {
     ktp_socket *ksock = get_socket(sock);
     sem_t *mutex = sem_open(ksock->mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
     int ret;
-
-    printf("Trying kbind\n");
-    printf("Mutex %s\n", ksock->mutex);
 
     if (ksock == NULL)
     {
@@ -184,11 +179,7 @@ int k_bind(ktp_sockid sock, SOCK_ADDR __src_addr, socklen_t __src_addr_len, SOCK
         return -1;
     }
 
-    printf("Waiting for mutex\n");
-
     sem_wait(mutex);
-
-    printf("Got the mutex\n");
 
     if (ksock->is_allocated == 0)
     {
@@ -197,17 +188,6 @@ int k_bind(ktp_sockid sock, SOCK_ADDR __src_addr, socklen_t __src_addr_len, SOCK
         errno = INVALIDSOCKET;
         return -1;
     }
-
-    printf("The ksock is allocated.. Trying to bind\n");
-
-    // if ((ret = bind(ksock->sockfd, __src_addr, __src_addr_len)) < 0)
-    // {
-    //     printf("COuld not bind\n");
-    //     sem_post(mutex);
-    //     sem_close(mutex);
-    //     errno = NOTBINDABLE;
-    //     return -1;
-    // }
 
     struct sockaddr_in *t = (struct sockaddr_in *)__cli_addr;
 
@@ -219,13 +199,12 @@ int k_bind(ktp_sockid sock, SOCK_ADDR __src_addr, socklen_t __src_addr_len, SOCK
     ksock->s_ip = t->sin_addr.s_addr;
     ksock->s_port = t->sin_port;
 
-    printf("Bidning done\n");
-
     sem_post(mutex);
     sem_close(mutex);
     return ret;
 }
 
+// Puts the given message in the send buffer of the socket and returns the number of bytes sent (NON-BLOCKING)
 ssize_t k_sendto(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __addr, socklen_t __addr_len)
 {
     ktp_socket *ksock = get_socket(sock);
@@ -233,8 +212,6 @@ ssize_t k_sendto(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __ad
     int seqno;
     char *_buf;
     struct sockaddr_in *t = (struct sockaddr_in *)__addr;
-
-    printf("trying to send\n");
 
     if (ksock == NULL)
     {
@@ -251,15 +228,9 @@ ssize_t k_sendto(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __ad
 
     _buf = (char *)buf;
 
-    // printf("Trying to get mutex\n");
-
     mutex = sem_open(ksock->mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
 
-    // printf("Waiting for mutex\n");
-
     sem_wait(mutex);
-
-    // printf("Got mutex\n");
 
     if (ksock->is_allocated == 0)
     {
@@ -270,9 +241,6 @@ ssize_t k_sendto(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __ad
         return -1;
     }
 
-    // printf("Checkign address\n");
-    // printf("t_addr: %d, ip: %d, t_inport: %d, sockport: %d\n", t->sin_addr.s_addr, ksock->ip, t->sin_port, ksock->port);
-
     if (t->sin_addr.s_addr != ksock->ip || t->sin_port != ksock->port)
     {
         sem_post(mutex);
@@ -281,8 +249,6 @@ ssize_t k_sendto(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __ad
         perror("Dst addr != bound address");
         return -1;
     }
-
-    // printf("Checking left size\n");
 
     if (ksock->send_buf.size == MAX_MESSAGES)
     {
@@ -295,8 +261,6 @@ ssize_t k_sendto(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __ad
 
     seqno = ksock->send_buf.ptr;
 
-    printf("Copying message in buf %d\n", seqno);
-
     for (int i = 0; i < MESSAGE_SIZE; i++)
     {
         ksock->send_buf.s[seqno][i] = _buf[i];
@@ -306,14 +270,13 @@ ssize_t k_sendto(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __ad
     ksock->send_buf.size++;
     ksock->send_buf.ptr = (seqno + 1) % MAX_MESSAGES;
 
-    // printf("Next pointed %d\n", ksock->send_buf.ptr);
-
     sem_post(mutex);
     sem_close(mutex);
 
     return n;
 }
 
+// Reads the message from the recieve buffer of the socket and returns the number of bytes read (NON-BLOCKING)
 ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __addr, socklen_t *__addr_len)
 {
     ktp_socket *ksock = get_socket(sock);
@@ -321,8 +284,6 @@ ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __
     int ret, seqno;
     char *_buf;
     struct sockaddr_in *t = (struct sockaddr_in *)__addr;
-
-    printf("Trying to recieve\n");
 
     if (ksock == NULL)
     {
@@ -337,13 +298,9 @@ ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __
         return -1;
     }
 
-    printf("Waiting for mutex\n");
-
     mutex = sem_open(ksock->mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
 
     sem_wait(mutex);
-
-    printf("Got the mutex\n");
 
     if (ksock->is_allocated == 0)
     {
@@ -358,7 +315,6 @@ ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __
 
     if (ksock->recv_buf.size == 0 || ksock->recv_buf.occ[seqno] == 0)
     {
-        printf("Recieve buff size : %d\n", ksock->recv_buf.size);
         sem_post(mutex);
         sem_close(mutex);
         errno = ENOMESSAGE;
@@ -389,6 +345,8 @@ ssize_t k_recvfrom(ktp_sockid sock, void *buf, size_t n, int flags, SOCK_ADDR __
     return n;
 }
 
+// Check if the socket has any pending operations to be done.
+// If true, socket is safe to close
 int k_isempty(ktp_sockid sock)
 {
     ktp_socket *ksock = get_socket(sock);
@@ -400,19 +358,16 @@ int k_isempty(ktp_sockid sock)
 
     sem_t *mutex = sem_open(ksock->mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
 
-    // sem_wait(&(socket_store->mutex));
     sem_wait(mutex);
 
     int isempty = (ksock->recv_buf.size == 0) && (ksock->send_buf.size == 0);
-
-    printf("send buf size %d\n", ksock->send_buf.size);
-    printf("recv buf size %d\n", ksock->recv_buf.size);
 
     sem_post(mutex);
 
     return isempty;
 }
 
+// Unallocate the socket and free the resources
 int k_close(ktp_sockid sock)
 {
     ktp_socket_store *socket_store = get_socket_store();
@@ -425,7 +380,6 @@ int k_close(ktp_sockid sock)
 
     sem_t *mutex = sem_open(ksock->mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
 
-    // sem_wait(&(socket_store->mutex));
     sem_wait(mutex);
 
     ksock->is_allocated = 0;
@@ -433,5 +387,4 @@ int k_close(ktp_sockid sock)
 
     sem_post(mutex);
     sem_close(mutex);
-    // sem_post(&(ksock->mutex));
 }

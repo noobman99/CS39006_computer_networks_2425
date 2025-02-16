@@ -1,3 +1,9 @@
+// =====================================
+// Assignment 3 Submission
+// Name: Parth Shashin Patil
+// Roll number: 22CS30041
+// =====================================
+
 #ifndef KTP_SOCKET
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -15,27 +21,31 @@
 #define KTP_SOCKET 0
 #endif
 
+// Project Constants
 #define MESSAGE_SIZE 512
 #define MAX_MESSAGES 10
-#define MAX_SOCKETS 2
+#define MAX_SOCKETS 10
 #define HEADER_SIZE 4
 #define MAX_SEQ_NUMBER 120
-#define MESSAGE_TIMEOUT 10
+#define MESSAGE_TIMEOUT 5
 #define RECIEVE_TIMEOUT 5
 #define GC_TIMEOUT 2
+#define p 0.5
+
+// Redef constants
 #define SEM_FLAGS (O_CREAT)
 #define SEM_PERMS 0666
 #define SEM_INITVAL 1
-#define p 0
-
-#define SOCK_KTP 0101
-
 #define SOCK_ADDR struct sockaddr *
 
+// user constants constants
+#define SOCK_KTP 0101
+
+// keys for shared memory
 #define KTP_PROJECT 9
-#define KTP_SEM_PROJ "ktpsemaa"
 #define FKEY "/home"
 
+// errors
 #define NOSOCKETRUNNING 0
 #define ENOSPACE 1
 #define NOTBINDABLE 2
@@ -48,7 +58,6 @@
 #define NOSPACE 1
 
 typedef int ktp_sockid;
-typedef int semaphore;
 
 struct sld_wnd
 {
@@ -85,7 +94,6 @@ struct ktp_socket_info
 
 struct ksocket
 {
-    sem_t mutex;
     struct ktp_socket_info socks[MAX_SOCKETS];
 };
 
@@ -94,14 +102,6 @@ typedef struct ktp_socket_info ktp_socket;
 
 // auxilary functions
 int dropmessage();
-ktp_socket_store *get_socket_store();
-ktp_socket *get_socket(ktp_sockid i);
-void clear_socket(ktp_socket *ksock);
-int in_window(int seq_num, struct sld_wnd *wnd);
-int increase_window(struct sld_wnd *wnd);
-int decrease_window(struct sld_wnd *wnd);
-int get_window_size(struct sld_wnd *wnd);
-int set_flag(int __flag, struct sld_wnd *wnd);
 
 // user functions
 
