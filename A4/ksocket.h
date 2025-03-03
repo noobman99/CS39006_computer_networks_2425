@@ -79,6 +79,7 @@ struct sck_buf
 struct ktp_socket_info
 {
     int is_allocated;
+    int is_terminated;
     int pid;
     int sockfd;
     in_addr_t ip;

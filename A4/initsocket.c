@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <stdio.h>
+#include <pthread.h>
 
 // global variables
 extern int errno;
@@ -129,7 +130,7 @@ void handleclose(int signo)
 }
 
 // R()
-int R()
+void *R()
 {
     ktp_socket_store *store = get_socket_store();
     fd_set fds;
@@ -388,7 +389,7 @@ int R()
 }
 
 // S()
-void S()
+void *S()
 {
     ktp_socket_store *store = get_socket_store();
     struct timeout_eval lst_time[MAX_SOCKETS][2];
@@ -538,7 +539,7 @@ void S()
 }
 
 // Garbage collector
-void G()
+void *G()
 {
     ktp_socket_store *store = get_socket_store();
     ktp_socket *ksock;
@@ -556,10 +557,8 @@ void G()
                 // check if process is dead
                 if (kill(ksock->pid, 0) == -1)
                 {
-                    ksock->is_allocated = 0;
-
                     // reset socket
-                    clear_socket(ksock);
+                    ksock->is_terminated = 1;
                 }
             }
         }
@@ -594,29 +593,17 @@ int main(int argc, char *argv[])
     for (int i = 0; i < MAX_SOCKETS; i++)
     {
         clear_socket(&socket_store->socks[i]);
-        socket_store->socks[i].sockfd = socket(AF_INET, SOCK_DGRAM, 0);
         sprintf(socket_store->socks[i].mutex, "/ssem%d", i);
         mutex[i] = sem_open(socket_store->socks[i].mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
     }
 
-    if (fork() == 0)
-    {
-        // Run the R thread
-        R();
-        exit(0);
-    }
-    if (fork() == 0)
-    {
-        // Run the S thread
-        S();
-        exit(0);
-    }
-    if (fork() == 0)
-    {
-        // Run the garbage collector
-        G();
-        exit(0);
-    }
+    pthread_t S_thread, R_thread, G_thread;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_create(&S_thread, &attr, S, NULL);
+    pthread_create(&R_thread, &attr, R, NULL);
+    pthread_create(&G_thread, &attr, G, NULL);
 
     // Run the bind function
     struct sockaddr_in addr;
@@ -635,6 +622,18 @@ int main(int argc, char *argv[])
             {
                 sem_post(mutex[i]);
                 continue;
+            }
+
+            if (ksock->is_terminated)
+            {
+                clear_socket(ksock);
+                sem_post(mutex[i]);
+                continue;
+            }
+
+            if (ksock->sockfd == -1)
+            {
+                ksock->sockfd = socket(AF_INET, SOCK_DGRAM, 0);
             }
 
             getsockname(ksock->sockfd, (struct sockaddr *)&addr, &alen);

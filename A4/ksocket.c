@@ -53,7 +53,10 @@ void clear_socket(ktp_socket *ksock)
 {
     ksock->ip = 0;
     ksock->is_allocated = 0;
+    ksock->is_terminated = 0;
     ksock->pid = 0;
+    close(ksock->sockfd);
+    ksock->sockfd = -1;
     ksock->port = 0;
 
     ksock->rwnd.ack_num = -1;
@@ -150,8 +153,6 @@ ktp_sockid k_socket(int __domain, int __type, int __protocol)
             sem_close(mutex);
             continue;
         }
-
-        clear_socket(&(socket_store->socks[i]));
 
         socket_store->socks[i].is_allocated = 1;
         socket_store->socks[i].pid = getpid();
@@ -382,8 +383,7 @@ int k_close(ktp_sockid sock)
 
     sem_wait(mutex);
 
-    ksock->is_allocated = 0;
-    ksock->pid = 0;
+    ksock->is_terminated = 1;
 
     sem_post(mutex);
     sem_close(mutex);
