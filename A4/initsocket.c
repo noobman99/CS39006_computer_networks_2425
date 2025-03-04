@@ -626,6 +626,9 @@ int main(int argc, char *argv[])
 
             if (ksock->is_terminated)
             {
+                close(ksock->sockfd);
+                ksock->is_bound = 0;
+                printf("Socket %d closed\n", ksock->sockfd);
                 clear_socket(ksock);
                 sem_post(mutex[i]);
                 continue;
@@ -638,16 +641,49 @@ int main(int argc, char *argv[])
 
             getsockname(ksock->sockfd, (struct sockaddr *)&addr, &alen);
 
-            if (addr.sin_addr.s_addr != ksock->s_ip || addr.sin_port != ksock->s_port)
+            if (ksock->is_bound && (addr.sin_addr.s_addr != ksock->s_ip || addr.sin_port != ksock->s_port))
             {
+                memset(&addr, 0, sizeof(addr));
+                addr.sin_family = AF_INET;
                 addr.sin_port = ksock->s_port;
                 addr.sin_addr.s_addr = ksock->s_ip;
+
+                printf("Binding Socket %d\n", i);
 
                 alen = sizeof(addr);
 
                 if (bind(ksock->sockfd, (struct sockaddr *)&addr, alen) < 0)
                 {
                     perror("Binding error.");
+                    switch (errno)
+                    {
+                    case EACCES:
+                        printf("Error: EACCES - Permission denied.\n");
+                        break;
+                    case EADDRINUSE:
+                        printf("Error: EADDRINUSE - Address already in use.\n");
+                        break;
+                    case EBADF:
+                        printf("Error: EBADF - Invalid file descriptor.\n");
+                        break;
+                    case EINVAL:
+                        printf("Error: EINVAL - Invalid argument. Sockfd = %d\n", ksock->sockfd);
+                        break;
+                    case ENOTSOCK:
+                        printf("Error: ENOTSOCK - Not a socket.\n");
+                        break;
+                    case EOPNOTSUPP:
+                        printf("Error: EOPNOTSUPP - Operation not supported on socket.\n");
+                        break;
+                    case EADDRNOTAVAIL:
+                        printf("Error: EADDRNOTAVAIL - Address not available.\n");
+                        break;
+                    case EFAULT:
+                        printf("Error: EFAULT - Bad address.\n");
+                        break;
+                    default:
+                        break;
+                    }
                 }
             }
 

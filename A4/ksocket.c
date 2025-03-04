@@ -52,12 +52,13 @@ ktp_socket *get_socket(ktp_sockid i)
 void clear_socket(ktp_socket *ksock)
 {
     ksock->ip = 0;
+    ksock->s_ip = 0;
     ksock->is_allocated = 0;
     ksock->is_terminated = 0;
     ksock->pid = 0;
-    close(ksock->sockfd);
     ksock->sockfd = -1;
     ksock->port = 0;
+    ksock->s_port = 0;
 
     ksock->rwnd.ack_num = -1;
     ksock->rwnd.front = 0;
@@ -170,6 +171,7 @@ ktp_sockid k_socket(int __domain, int __type, int __protocol)
 // bind the socket to the given source and destination addresses
 int k_bind(ktp_sockid sock, SOCK_ADDR __src_addr, socklen_t __src_addr_len, SOCK_ADDR __cli_addr, socklen_t __cli_addr_len)
 {
+    ktp_socket_store *socket_store = get_socket_store();
     ktp_socket *ksock = get_socket(sock);
     sem_t *mutex = sem_open(ksock->mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
     int ret;
@@ -201,7 +203,49 @@ int k_bind(ktp_sockid sock, SOCK_ADDR __src_addr, socklen_t __src_addr_len, SOCK
     ksock->s_port = t->sin_port;
 
     sem_post(mutex);
+
+    int has_dup = 0;
+
+    sem_t *mutex_new;
+    for (int i = 0; i < MAX_SOCKETS; i++)
+    {
+        mutex_new = sem_open(socket_store->socks[i].mutex, SEM_FLAGS, SEM_PERMS, SEM_INITVAL);
+        sem_wait(mutex_new);
+        if (socket_store->socks[i].is_allocated && i != sock)
+        {
+            if ((socket_store->socks[i].s_ip == ksock->s_ip && socket_store->socks[i].s_port == ksock->s_port) || (socket_store->socks[i].ip == ksock->ip && socket_store->socks[i].port == ksock->port))
+            {
+                has_dup = 1;
+                sem_post(mutex_new);
+                sem_close(mutex_new);
+                break;
+            }
+        }
+        sem_post(mutex_new);
+        sem_close(mutex_new);
+    }
+
+    sem_wait(mutex);
+    if (has_dup)
+    {
+        ksock->ip = 0;
+        ksock->port = 0;
+        ksock->s_ip = 0;
+        ksock->s_port = 0;
+
+        sem_post(mutex);
+        sem_close(mutex);
+        errno = EADDRINUSE;
+        return -1;
+    }
+    else
+    {
+        ksock->is_bound = 1;
+    }
+
+    sem_post(mutex);
     sem_close(mutex);
+
     return ret;
 }
 

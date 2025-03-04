@@ -30,7 +30,7 @@
 #define MESSAGE_TIMEOUT 5
 #define RECIEVE_TIMEOUT 5
 #define GC_TIMEOUT 2
-#define p 0.5
+#define p 0
 
 // Redef constants
 #define SEM_FLAGS (O_CREAT)
@@ -82,6 +82,7 @@ struct ktp_socket_info
     int is_terminated;
     int pid;
     int sockfd;
+    int is_bound;
     in_addr_t ip;
     in_port_t port;
     in_addr_t s_ip;
