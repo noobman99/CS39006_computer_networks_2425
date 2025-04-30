@@ -12,6 +12,10 @@
 #include <stdio.h>
 #include <pthread.h>
 
+#ifndef VERBOSE
+#define VERBOSE 0
+#endif
+
 // global variables
 extern int errno;
 sem_t *mutex[MAX_SOCKETS];
@@ -49,8 +53,8 @@ ssize_t create_packet(char *packet, int m, char *buf, int n, int is_ack, int seq
 
     // headers -
     packet[0] = (u_int8_t)is_ack; // is ack
-    packet[1] = (u_int8_t)seq_number;
-    packet[2] = (u_int8_t)ack_number;
+    packet[1] = (u_int8_t)(seq_number + 1);
+    packet[2] = (u_int8_t)(ack_number + 1);
     packet[3] = (u_int8_t)recv_size;
 
     int i = 0, j = HEADER_SIZE;
@@ -73,8 +77,8 @@ ssize_t decode_packet(char *packet, int m, char *buf, int n, int *is_ack, int *s
     }
 
     *is_ack = (int)packet[0];
-    *seq_number = (int)packet[1];
-    *ack_number = (int)packet[2];
+    *seq_number = ((int)packet[1]) - 1;
+    *ack_number = ((int)packet[2]) - 1;
     *recv_size = (int)packet[3];
 
     int i = 0, j = HEADER_SIZE;
@@ -92,7 +96,8 @@ ssize_t decode_packet(char *packet, int m, char *buf, int n, int *is_ack, int *s
 // Signal handler to close the process
 void handleclose(int signo)
 {
-    printf("KILLING THE PROCESS\n");
+    if (VERBOSE)
+        printf("KILLING THE PROCESS\n");
 
     key_t shmkey = ftok(FKEY, KTP_PROJECT);
     int shmid = shmget(shmkey, sizeof(ktp_socket_store), 0666 | IPC_CREAT);
@@ -160,7 +165,8 @@ void *R()
             if (ksock->is_allocated)
             {
                 FD_SET(ksock->sockfd, &fds);
-                printf("R_Socket %d: Adding %d to recieve fds\n", i, ksock->sockfd);
+                if (VERBOSE)
+                    printf("R_Socket %d: Adding %d to recieve fds\n", i, ksock->sockfd);
                 nfds = mmax(nfds, ksock->sockfd);
             }
             sem_post(mutex[i]);
@@ -169,29 +175,31 @@ void *R()
         tv.tv_sec = RECIEVE_TIMEOUT;
         tv.tv_usec = 0;
 
-        printf("R_ : nfds = %d\n", nfds + 1);
+        if (VERBOSE)
+            printf("R_ : nfds = %d\n", nfds + 1);
 
         // wait for select
         if (select(nfds + 1, &fds, NULL, NULL, &tv) < 0)
         {
             perror("Select errored out");
-            switch (errno)
-            {
-            case EBADF:
-                printf("Error: EBADF - Invalid file descriptor.\n");
-                break;
-            case EINTR:
-                printf("Error: EINTR - System call interrupted by a signal.\n");
-                break;
-            case EINVAL:
-                printf("Error: EINVAL - Invalid argument (nfds exceeds limit or invalid timeout).\n");
-                break;
-            case ENOMEM:
-                printf("Error: ENOMEM - Unable to allocate memory.\n");
-                break;
-            default:
-                printf("Error: Unknown error (%d) - %s\n", errno, strerror(errno));
-            }
+            if (VERBOSE)
+                switch (errno)
+                {
+                case EBADF:
+                    printf("Error: EBADF - Invalid file descriptor.\n");
+                    break;
+                case EINTR:
+                    printf("Error: EINTR - System call interrupted by a signal.\n");
+                    break;
+                case EINVAL:
+                    printf("Error: EINVAL - Invalid argument (nfds exceeds limit or invalid timeout).\n");
+                    break;
+                case ENOMEM:
+                    printf("Error: ENOMEM - Unable to allocate memory.\n");
+                    break;
+                default:
+                    printf("Error: Unknown error (%d) - %s\n", errno, strerror(errno));
+                }
             exit(1);
         }
 
@@ -211,7 +219,8 @@ void *R()
             if (ksock->is_allocated && ksock->rwnd.flags == NOSPACE && (time_stamp >= lst_time[i] + RECIEVE_TIMEOUT) && (recv_size = get_window_size(&ksock->rwnd)) > 0)
             {
                 // No space -- SEND duplicate ACK packet with new buffer size
-                printf("R_Socket %d: NOSPACE set, sending updated recv_size %d\n", i, recv_size);
+                if (VERBOSE)
+                    printf("R_Socket %d: NOSPACE set, sending updated recv_size %d\n", i, recv_size);
                 nwrite = create_packet(packet, (MESSAGE_SIZE + HEADER_SIZE), NULL, 0, 1, 0, ksock->rwnd.ack_num, recv_size);
                 addr.sin_family = AF_INET;
                 addr.sin_addr.s_addr = ksock->ip;
@@ -234,7 +243,8 @@ void *R()
             memset(&addr, 0, sizeof(addr));
             alen = sizeof(addr);
 
-            printf("R_Socket %d: Recieved a message \n", i);
+            if (VERBOSE)
+                printf("R_Socket %d: Recieved a message \n", i);
 
             if (ksock->is_allocated)
             {
@@ -245,7 +255,8 @@ void *R()
                 // Simulate dropping of packets
                 if (dropmessage(prob))
                 {
-                    printf("R_Socket %d: Drop message spotted for following desc, is_ack: %d, seq_num: %d, ack_num: %d, recv_size: %d\n", i, is_ack, seq_num, ack_num, recv_size);
+                    if (VERBOSE)
+                        printf("R_Socket %d: Drop message spotted for following desc, is_ack: %d, seq_num: %d, ack_num: %d, recv_size: %d\n", i, is_ack, seq_num, ack_num, recv_size);
                     sem_post(mutex[i]);
                     continue;
                 }
@@ -253,27 +264,31 @@ void *R()
                 // check if they are from bound address and port
                 if (addr.sin_addr.s_addr == ksock->ip && addr.sin_port == ksock->port)
                 {
-                    printf("R_Socket %d: Recieved a valid message\n", i);
+                    if (VERBOSE)
+                        printf("R_Socket %d: Recieved a valid message\n", i);
 
                     if (nread == 0)
                     {
                         ksock->is_allocated = 0;
                         ksock->pid = 0;
-                        printf("R_Socket %d: Connection broke :( \n", i);
+                        if (VERBOSE)
+                            printf("R_Socket %d: Connection broke :( \n", i);
                     }
                     else
                     {
                         datalen = decode_packet(packet, nread, buf, MESSAGE_SIZE, &is_ack, &seq_num, &ack_num, &recv_size);
                         if (is_ack)
                         {
-                            printf("R_Socket %d: It is an ACK for %d while acknum is %d\n", i, ack_num, ksock->swnd.ack_num);
+                            if (VERBOSE)
+                                printf("R_Socket %d: It is an ACK for %d while acknum is %d\n", i, ack_num, ksock->swnd.ack_num);
 
                             // if the reciever packet is ACKNOWLEDGEMENT
                             if (ack_num == ksock->swnd.ack_num)
                             {
                                 // duplicate ACK, only reset maximum size possible for send buffer
                                 ksock->swnd.max_size = recv_size;
-                                printf("R_Socket %d: It is a dup ack.. reset max_size to %d\n", i, ksock->swnd.max_size);
+                                if (VERBOSE)
+                                    printf("R_Socket %d: It is a dup ack.. reset max_size to %d\n", i, ksock->swnd.max_size);
                             }
                             else
                             {
@@ -307,7 +322,8 @@ void *R()
                         else
                         {
                             // if the recieved packet is data
-                            printf("R_Socket %d: It is a message with seqnum %d\n", i, seq_num);
+                            if (VERBOSE)
+                                printf("R_Socket %d: It is a message with seqnum %d\n", i, seq_num);
 
                             // check if in recieving window
                             if (in_window(seq_num, &ksock->rwnd))
@@ -320,7 +336,8 @@ void *R()
                                 if (ksock->recv_buf.occ[buff_idx] == 0)
                                 {
                                     // copy into buffer
-                                    printf("R_Socket %d: Writing into buffer with idx %d\n", i, buff_idx);
+                                    if (VERBOSE)
+                                        printf("R_Socket %d: Writing into buffer with idx %d\n", i, buff_idx);
 
                                     ksock->recv_buf.occ[buff_idx] = 1;
                                     for (int i = 0; i < datalen; i++)
@@ -358,7 +375,8 @@ void *R()
                                         nwrite = create_packet(packet, (MESSAGE_SIZE + HEADER_SIZE), NULL, 0, 1, 0, ack_num, recv_size);
                                         sendto(ksock->sockfd, packet, nwrite, 0, (struct sockaddr *)&addr, alen);
 
-                                        printf("R_Socket %d: Sending ACK for %d\n", i, ack_num);
+                                        if (VERBOSE)
+                                            printf("R_Socket %d: Sending ACK for %d\n", i, ack_num);
                                     }
                                 }
                             }
@@ -376,7 +394,8 @@ void *R()
                                     nwrite = create_packet(packet, (MESSAGE_SIZE + HEADER_SIZE), NULL, 0, 1, 0, seq_num, recv_size);
                                     sendto(ksock->sockfd, packet, nwrite, 0, (struct sockaddr *)&addr, alen);
 
-                                    printf("R_Socket %d: (BAD EDGE CASE) Sending dupli ACK for %d\n", i, ack_num);
+                                    if (VERBOSE)
+                                        printf("R_Socket %d: (BAD EDGE CASE) Sending dupli ACK for %d\n", i, ack_num);
                                 }
                             }
                         }
@@ -416,7 +435,8 @@ void *S()
             ksock = &store->socks[i];
             to_send = 0;
 
-            printf("S_Socket %d: Checking \n", i);
+            if (VERBOSE)
+                printf("S_Socket %d: Checking \n", i);
 
             sem_wait(mutex[i]);
 
@@ -436,7 +456,8 @@ void *S()
                 {
                     if (time_stamp >= lst_time[i][0].t + MESSAGE_TIMEOUT)
                     {
-                        printf("S_Socket %d: Having to resend the messages\n", i);
+                        if (VERBOSE)
+                            printf("S_Socket %d: Having to resend the messages\n", i);
 
                         // NOT ACKed && time > T (if time != T, then second lst_time would be empty)
                         // Packets to be resent -- to_send = 1
@@ -454,7 +475,8 @@ void *S()
                 }
                 else
                 {
-                    printf("S_Socket %d: Everything in lst 0 has been acked\n", i);
+                    if (VERBOSE)
+                        printf("S_Socket %d: Everything in lst 0 has been acked\n", i);
                     // Move second to first
                     // Set second to empty
                     lst_time[i][0] = lst_time[i][1];
@@ -466,7 +488,8 @@ void *S()
             // add the messages into particular window
             rend = ksock->swnd.back;
 
-            printf("S_Socket %d: curr back: %d, curr front: %d, max_size: %d\n", i, ksock->swnd.front, ksock->swnd.back, ksock->swnd.max_size);
+            if (VERBOSE)
+                printf("S_Socket %d: curr back: %d, curr front: %d, max_size: %d\n", i, ksock->swnd.front, ksock->swnd.back, ksock->swnd.max_size);
 
             while (ksock->send_buf.occ[rend % MAX_MESSAGES] == 1 && get_window_size(&ksock->swnd) < ksock->swnd.max_size)
             {
@@ -474,7 +497,8 @@ void *S()
                 to_send = 1;
             }
 
-            printf("S_Socket %d: (UPDATED) curr back: %d, curr front: %d, max_size: %d\n", i, ksock->swnd.front, ksock->swnd.back, ksock->swnd.max_size);
+            if (VERBOSE)
+                printf("S_Socket %d: (UPDATED) curr back: %d, curr front: %d, max_size: %d\n", i, ksock->swnd.front, ksock->swnd.back, ksock->swnd.max_size);
 
             if (to_send)
             {
@@ -504,7 +528,8 @@ void *S()
 
                         sendto(ksock->sockfd, packet, pcksize, 0, (struct sockaddr *)&addr, alen);
 
-                        printf("S_Socket %d: Sent Message %d in lst 0\n", i, seq_num);
+                        if (VERBOSE)
+                            printf("S_Socket %d: Sent Message %d in lst 0\n", i, seq_num);
 
                         seq_num = (seq_num + 1) % MAX_SEQ_NUMBER;
                     }
@@ -526,7 +551,8 @@ void *S()
 
                         sendto(ksock->sockfd, packet, pcksize, 0, (struct sockaddr *)&addr, alen);
 
-                        printf("S_Socket %d: Sent Message %d in lst 1\n", i, seq_num);
+                        if (VERBOSE)
+                            printf("S_Socket %d: Sent Message %d in lst 1\n", i, seq_num);
 
                         seq_num = (seq_num + 1) % MAX_SEQ_NUMBER;
                     }
@@ -628,7 +654,8 @@ int main(int argc, char *argv[])
             {
                 close(ksock->sockfd);
                 ksock->is_bound = 0;
-                printf("Socket %d closed\n", ksock->sockfd);
+                if (VERBOSE)
+                    printf("Socket %d closed\n", ksock->sockfd);
                 clear_socket(ksock);
                 sem_post(mutex[i]);
                 continue;
@@ -648,42 +675,44 @@ int main(int argc, char *argv[])
                 addr.sin_port = ksock->s_port;
                 addr.sin_addr.s_addr = ksock->s_ip;
 
-                printf("Binding Socket %d\n", i);
+                if (VERBOSE)
+                    printf("Binding Socket %d\n", i);
 
                 alen = sizeof(addr);
 
                 if (bind(ksock->sockfd, (struct sockaddr *)&addr, alen) < 0)
                 {
                     perror("Binding error.");
-                    switch (errno)
-                    {
-                    case EACCES:
-                        printf("Error: EACCES - Permission denied.\n");
-                        break;
-                    case EADDRINUSE:
-                        printf("Error: EADDRINUSE - Address already in use.\n");
-                        break;
-                    case EBADF:
-                        printf("Error: EBADF - Invalid file descriptor.\n");
-                        break;
-                    case EINVAL:
-                        printf("Error: EINVAL - Invalid argument. Sockfd = %d\n", ksock->sockfd);
-                        break;
-                    case ENOTSOCK:
-                        printf("Error: ENOTSOCK - Not a socket.\n");
-                        break;
-                    case EOPNOTSUPP:
-                        printf("Error: EOPNOTSUPP - Operation not supported on socket.\n");
-                        break;
-                    case EADDRNOTAVAIL:
-                        printf("Error: EADDRNOTAVAIL - Address not available.\n");
-                        break;
-                    case EFAULT:
-                        printf("Error: EFAULT - Bad address.\n");
-                        break;
-                    default:
-                        break;
-                    }
+                    if (VERBOSE)
+                        switch (errno)
+                        {
+                        case EACCES:
+                            printf("Error: EACCES - Permission denied.\n");
+                            break;
+                        case EADDRINUSE:
+                            printf("Error: EADDRINUSE - Address already in use.\n");
+                            break;
+                        case EBADF:
+                            printf("Error: EBADF - Invalid file descriptor.\n");
+                            break;
+                        case EINVAL:
+                            printf("Error: EINVAL - Invalid argument. Sockfd = %d\n", ksock->sockfd);
+                            break;
+                        case ENOTSOCK:
+                            printf("Error: ENOTSOCK - Not a socket.\n");
+                            break;
+                        case EOPNOTSUPP:
+                            printf("Error: EOPNOTSUPP - Operation not supported on socket.\n");
+                            break;
+                        case EADDRNOTAVAIL:
+                            printf("Error: EADDRNOTAVAIL - Address not available.\n");
+                            break;
+                        case EFAULT:
+                            printf("Error: EFAULT - Bad address.\n");
+                            break;
+                        default:
+                            break;
+                        }
                 }
             }
 

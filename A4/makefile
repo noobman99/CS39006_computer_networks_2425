@@ -1,7 +1,7 @@
 all: initsocket send recv
 
 initsocket: initsocket.c ksocket.h libsocket.a
-	gcc -o initsocket initsocket.c ksocket.c -L. -lsocket -lrt -lpthread
+	gcc -o initsocket initsocket.c ksocket.c -L. -lsocket -lrt -lpthread -DVERBOSE
 
 send: ksocket.h user1.c libsocket.a
 	gcc -o send user1.c ksocket.c -L. -lsocket -lrt -lpthread
@@ -17,7 +17,7 @@ run_daemon: initsocket
 	./initsocket
 
 run_s: send
-	./send in.txt
+	./send input.txt
 
 run_r: recv
 	./recv output.txt
